@@ -80,11 +80,46 @@ QcomEvtDeviceAdd(
             }
         }
 
-        // On driver load, adjust Domain2 based on Domain0 and Domain1 frequencies
+        // Probe each mapped domain: check reg_enable and reg_dcvs_ctrl
         {
-            NTSTATUS s = QcomAdjustDomain2BasedOn0And1(device);
-            if (!NT_SUCCESS(s))
-                KdPrint(("SocFrequencyManagement: initial Domain2 adjustment failed 0x%08x\n", s));
+            const ULONG reg_enable_off = 0x0;
+            const ULONG reg_dcvs_ctrl_off = 0xbc;
+            int d;
+
+            for (d = 0; d < 3; d++) {
+                PVOID b = devCtx->MmioBase[d];
+                if (b == NULL) {
+                    devCtx->PerCoreDcvs[d] = FALSE;
+                    KdPrint(("SocFrequencyManagement: domain %d not mapped, skipping\n", d));
+                    continue;
+                }
+
+                // Read reg_enable; if not enabled, unmap and skip domain
+                {
+                    ULONG en = READ_REGISTER_ULONG((ULONG *)((PUCHAR)b + reg_enable_off));
+                    if ((en & 0x1) == 0) {
+                        KdPrint(("SocFrequencyManagement: domain %d not enabled (reg_enable=0x%08x), unmapping\n", d, en));
+                        MmUnmapIoSpace(devCtx->MmioBase[d], mapSize);
+                        devCtx->MmioBase[d] = NULL;
+                        devCtx->PerCoreDcvs[d] = FALSE;
+                        continue;
+                    }
+                }
+
+                // Read reg_dcvs_ctrl bit0: if set, enable per-core DCVS behaviour
+                {
+                    ULONG dcvs = READ_REGISTER_ULONG((ULONG *)((PUCHAR)b + reg_dcvs_ctrl_off));
+                    devCtx->PerCoreDcvs[d] = ((dcvs & 0x1) != 0) ? TRUE : FALSE;
+                    KdPrint(("SocFrequencyManagement: domain %d reg_dcvs_ctrl=0x%08x per_core=%d\n", d, dcvs, devCtx->PerCoreDcvs[d]));
+                }
+            }
+
+            // On driver load, adjust Domain2 based on Domain1 frequency
+            {
+                NTSTATUS s = QcomAdjustDomain2BasedOn1(device);
+                if (!NT_SUCCESS(s))
+                    KdPrint(("SocFrequencyManagement: initial Domain2 adjustment failed 0x%08x\n", s));
+            }
         }
     }
 

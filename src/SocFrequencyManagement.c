@@ -31,21 +31,50 @@ static NTSTATUS hw_set_perf_state(WDFDEVICE Device, UINT32 Domain, UINT32 Index)
     ULONG *reg;
     const ULONG reg_perf_state_off = 0x920;
 
-    // Only CPU7 (value == 2) is supported; map to MmioBase[2]
-    if (Domain == 2) {
-        base = devCtx->MmioBase[2];
-    } else {
-        return STATUS_INVALID_PARAMETER;
+    // Map domain to MMIO base: domain indices 0/1/2 map to MmioBase[0..2]
+    if (Domain == 0) {
+        base = devCtx->MmioBase[0];
     }
+    else if (Domain == 1) {
+        base = devCtx->MmioBase[1];
+    }
+    else if (Domain == 2) {
+        base = devCtx->MmioBase[2];
+    }
+    else 
+        return STATUS_INVALID_PARAMETER;
 
     if (base == NULL) {
         KdPrint(("SocFrequencyManagement: hw_set_perf_state domain=%u no MMIO mapped\n", Domain));
         return STATUS_DEVICE_NOT_READY;
     }
 
-    reg = (ULONG *)((PUCHAR)base + reg_perf_state_off);
-    WRITE_REGISTER_ULONG(reg, (ULONG)Index);
-    KdPrint(("SocFrequencyManagement: wrote perf_state domain=%u index=%u reg=%p\n", Domain, Index, reg));
+    // If per-core DCVS is enabled for this domain, write the same index
+    // into successive per-core perf_state registers (offset + 4 per core)
+    {
+        int core_count = 1;
+        int i;
+
+        if (devCtx->PerCoreDcvs[Domain]) {
+            if (Domain == 0) {
+                core_count = 4;    // CPUs 0-3
+            }
+            else if (Domain == 1) {
+                core_count = 3;    // CPUs 4-6
+            }
+            else if (Domain == 2) {
+                core_count = 1;    // CPU7
+            }
+        }
+
+        for (i = 0; i < core_count; i++) {
+            reg = (ULONG *)((PUCHAR)base + reg_perf_state_off + i * sizeof(ULONG));
+            WRITE_REGISTER_ULONG(reg, (ULONG)Index);
+        }
+
+        KdPrint(("SocFrequencyManagement: wrote perf_state domain=%u index=%u cores=%d base=%p\n",
+                 Domain, Index, core_count, base));
+    }
 
     return STATUS_SUCCESS;
 }

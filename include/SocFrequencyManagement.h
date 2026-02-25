@@ -88,6 +88,8 @@ typedef struct _DEVICE_CONTEXT {
     UINT32 CurrentIndexDomain2;
     // MMIO bases for three freq domains (only MmioBase[2] used)
     PVOID MmioBase[3];
+    // Per-domain per-core DCVS capability (true if per-core perf_state registers are supported)
+    BOOLEAN PerCoreDcvs[3];
     // WDF timer for periodic Domain2 adjustment
     WDFTIMER PeriodicTimer;
 } DEVICE_CONTEXT, *PDEVICE_CONTEXT;
