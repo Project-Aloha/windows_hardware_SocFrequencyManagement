@@ -1,0 +1,47 @@
+[Version]
+Signature="$Windows NT$"
+Class=Processor
+ClassGuid={50127dc3-0f36-415e-a6cc-4cb3be910b65}
+Provider=%ProviderName%
+DriverVer = 02/25/2026,18.7.41.622
+CatalogFile = qcom_cpufreq.cat
+PnpLockdown = 1
+
+[Manufacturer]
+%MfgName%=Devices,NTARM64
+
+[Devices.NTARM64]
+%DeviceDesc% = qcom_cpufreq_Install, Root\QcomCpufreq
+
+[SourceDisksNames]
+1 = %DiskName%,,,
+
+[SourceDisksFiles]
+qcom_cpufreq.sys = 1,,
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[qcom_cpufreq_Install.NT]
+CopyFiles = Drivers_Dir
+
+[Drivers_Dir]
+qcom_cpufreq.sys
+
+[qcom_cpufreq_Install.NT.Services]
+AddService = qcom_cpufreq, %SPSVCINST_ASSOCSERVICE%, qcom_cpufreq_Service_Inst
+
+[qcom_cpufreq_Service_Inst]
+DisplayName    = %qcom_cpufreq.SVCDESC%
+ServiceType    = 1
+StartType      = 3
+ErrorControl   = 1
+ServiceBinary  = %13%\qcom_cpufreq.sys
+
+[Strings]
+ProviderName="Qualcomm"
+MfgName="Qualcomm"
+DeviceDesc="Qualcomm Snapdragon 855 Domain2 Tuning Driver"
+DiskName="Qualcomm Snapdragon 855 Domain2 Tuning Installation Disk"
+SPSVCINST_ASSOCSERVICE = 0x00000002
+qcom_cpufreq.SVCDESC = "Qualcomm Snapdragon 855 Domain2 Tuning Service"
