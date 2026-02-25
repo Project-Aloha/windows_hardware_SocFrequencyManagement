@@ -9,27 +9,6 @@
 #include <wdf.h>
 #include "qcom_cpufreq.h"
 
-// Hardcoded LUTs (frequencies in kHz) from sm8150.dtsi OPP tables
-static const unsigned int lut_cpu0_khz[] = {
-    300000,403200,499200,576000,672000,768000,844800,940800,
-    1036800,1113600,1209600,1305600,1382400,1478400,1555200,1632000,1708800,1785600
-};
-
-static const size_t lut_cpu0_count = sizeof(lut_cpu0_khz)/sizeof(lut_cpu0_khz[0]);
-
-static const unsigned int lut_cpu4_khz[] = {
-    710400,825600,940800,1056000,1171200,1286400,1401600,1497600,
-    1612800,1708800,1804800,1920000,2016000,2131200,2227200,2323200,2419200
-};
-static const size_t lut_cpu4_count = sizeof(lut_cpu4_khz)/sizeof(lut_cpu4_khz[0]);
-
-static const unsigned int lut_cpu7_khz[] = {
-    825600,940800,1056000,1171200,1286400,1401600,1497600,1612800,
-    1708800,1804800,1920000,2016000,2131200,2227200,2323200,2419200,
-    2534400,2649600,2745600,2841600
-};
-static const size_t lut_cpu7_count = sizeof(lut_cpu7_khz) / sizeof(lut_cpu7_khz[0]);
-
 // Helper: clamp index
 static unsigned int clamp_index(unsigned int idx, size_t max)
 {
@@ -71,6 +50,101 @@ static NTSTATUS hw_set_perf_state(WDFDEVICE Device, UINT32 Domain, UINT32 Index)
 NTSTATUS QcomSetPerfState(_In_ WDFDEVICE Device, _In_ UINT32 Domain, _In_ UINT32 Index)
 {
     return hw_set_perf_state(Device, Domain, Index);
+}
+
+// Read current perf_state index from given domain MMIO (offset 0x920)
+static NTSTATUS read_perf_state_index(WDFDEVICE Device, UINT32 Domain, UINT32 *Index)
+{
+    PDEVICE_CONTEXT devCtx = DeviceGetContext(Device);
+    PVOID base = NULL;
+    const ULONG reg_perf_state_off = 0x920;
+
+    if (!Index)
+        return STATUS_INVALID_PARAMETER;
+
+    if (Domain == 0) base = devCtx->MmioBase[0];
+    else if (Domain == 4) base = devCtx->MmioBase[1];
+    else if (Domain == 7) base = devCtx->MmioBase[2];
+    else return STATUS_INVALID_PARAMETER;
+
+    if (base == NULL)
+        return STATUS_DEVICE_NOT_READY;
+
+    {
+        ULONG *reg = (ULONG *)((PUCHAR)base + reg_perf_state_off);
+        ULONG val = READ_REGISTER_ULONG(reg);
+        *Index = (UINT32)val;
+        return STATUS_SUCCESS;
+    }
+}
+
+// Choose the best index in lut_cpu7_khz closest to target_khz
+static unsigned int find_closest_index_in_cpu7(unsigned int target_khz)
+{
+    unsigned int best = 0;
+    unsigned int i;
+    unsigned int best_diff = (unsigned int)-1;
+
+    for (i = 0; i < lut_cpu7_count; i++) {
+        unsigned int val = lut_cpu7_khz[i];
+        unsigned int diff = (val > target_khz) ? (val - target_khz) : (target_khz - val);
+        if (diff < best_diff) {
+            best_diff = diff;
+            best = i;
+        }
+    }
+
+    return best;
+}
+
+// Adjust Domain2 based on current Domain0 and Domain1 perf_state frequencies
+NTSTATUS QcomAdjustDomain2BasedOn0And1(_In_ WDFDEVICE Device)
+{
+    UINT32 idx1 = 0;
+    NTSTATUS s1;
+
+    // Only depend on Domain1 (mid-cluster)
+    s1 = read_perf_state_index(Device, 4, &idx1);
+    if (!NT_SUCCESS(s1)) {
+        KdPrint(("qcom_cpufreq: cannot read domain1 perf_state (s1=0x%08x)\n", s1));
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    idx1 = clamp_index(idx1, lut_cpu4_count);
+    unsigned int freq1 = lut_cpu4_khz[idx1];
+
+    // If domain1 is at its max OPP, set Domain2 to max as well
+    unsigned int new_idx;
+    if (idx1 == (UINT32)(lut_cpu4_count - 1)) {
+        new_idx = (unsigned int)(lut_cpu7_count - 1);
+    } else {
+        new_idx = find_closest_index_in_cpu7(freq1);
+    }
+
+    // Update device context and write hardware
+    PDEVICE_CONTEXT devCtx = DeviceGetContext(Device);
+    devCtx->CurrentIndexDomain2 = new_idx;
+
+    NTSTATUS s = hw_set_perf_state(Device, 2, new_idx);
+    if (!NT_SUCCESS(s))
+        KdPrint(("qcom_cpufreq: failed to write Domain2 idx=%u status=0x%08x\n", new_idx, s));
+    else
+        KdPrint(("qcom_cpufreq: adjusted Domain2 to idx=%u (~%u kHz) based on domain1=%u kHz\n",
+                 new_idx, lut_cpu7_khz[new_idx], freq1));
+
+    return s;
+}
+
+// Timer callback: parent object is the device
+VOID
+QcomPeriodicTimerFunc(_In_ WDFTIMER Timer)
+{
+    WDFDEVICE device = (WDFDEVICE)WdfTimerGetParentObject(Timer);
+    if (device == NULL)
+        return;
+
+    // Call adjust function; ignore return - logs inside function
+    QcomAdjustDomain2BasedOn0And1(device);
 }
 
 NTSTATUS QcomEvtIoDeviceControl(

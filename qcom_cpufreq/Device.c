@@ -5,6 +5,9 @@
 #include "Device.h"
 #include "qcom_cpufreq.h"
 
+// Timer callback prototype
+EVT_WDF_TIMER QcomPeriodicTimerFunc;
+
 // Cleanup callback to unmap MMIO regions
 VOID
 DeviceEvtCleanup(_In_ WDFOBJECT DeviceObject)
@@ -13,6 +16,12 @@ DeviceEvtCleanup(_In_ WDFOBJECT DeviceObject)
     PDEVICE_CONTEXT devCtx = DeviceGetContext(device);
     const SIZE_T mapSize = 0x1400;
     int i;
+
+    // Stop and delete timer if exists
+    if (devCtx->PeriodicTimer) {
+        WdfTimerStop(devCtx->PeriodicTimer, TRUE);
+        devCtx->PeriodicTimer = NULL;
+    }
 
     for (i = 0; i < 3; i++) {
         if (devCtx->MmioBase[i]) {
@@ -71,17 +80,32 @@ QcomEvtDeviceAdd(
             }
         }
 
-        // On driver load, set Domain2 to nearest LUT entry to 900MHz.
-        // sm8150 big-cluster entries: 825600, 940800, ... -> choose index 1 (940800 kHz)
+        // On driver load, adjust Domain2 based on Domain0 and Domain1 frequencies
         {
-            NTSTATUS s;
-            UINT32 idx = 1;
-            devCtx->CurrentIndexDomain2 = idx;
-            s = QcomSetPerfState(device, 2, idx);
+            NTSTATUS s = QcomAdjustDomain2BasedOn0And1(device);
             if (!NT_SUCCESS(s))
-                KdPrint(("qcom_cpufreq: failed to set Domain2 perf state idx=%u status=0x%08x\n", idx, s));
-            else
-                KdPrint(("qcom_cpufreq: Domain2 perf state set to idx=%u (approx 940800 kHz)\n", idx));
+                KdPrint(("qcom_cpufreq: initial Domain2 adjustment failed 0x%08x\n", s));
+        }
+    }
+
+    // Create a periodic WDF timer to adjust Domain2 periodically
+    {
+        WDFTIMER timer;
+        WDF_TIMER_CONFIG timerConfig;
+        WDF_OBJECT_ATTRIBUTES timerAttr;
+        const ULONG periodMs = 5000; // 5 seconds
+
+        WDF_TIMER_CONFIG_INIT_PERIODIC(&timerConfig, QcomPeriodicTimerFunc, periodMs);
+        WDF_OBJECT_ATTRIBUTES_INIT(&timerAttr);
+        timerAttr.ParentObject = device;
+
+        status = WdfTimerCreate(&timerConfig, &timerAttr, &timer);
+        if (!NT_SUCCESS(status)) {
+            KdPrint(("qcom_cpufreq: WdfTimerCreate failed 0x%08x\n", status));
+        } else {
+            devCtx->PeriodicTimer = timer;
+            WdfTimerStart(timer, WDF_REL_TIMEOUT_IN_MS(periodMs));
+            KdPrint(("qcom_cpufreq: periodic timer started (%u ms)\n", periodMs));
         }
     }
 
