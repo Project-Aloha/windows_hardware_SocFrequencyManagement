@@ -104,4 +104,4 @@ NTSTATUS QcomEvtIoDeviceControl(
 
 // Exported helper to set perf state from other modules (e.g. Device.c)
 NTSTATUS QcomSetPerfState(_In_ WDFDEVICE Device, _In_ UINT32 Domain, _In_ UINT32 Index);
-NTSTATUS QcomAdjustDomain2BasedOn0And1(_In_ WDFDEVICE Device);
+NTSTATUS QcomAdjustDomain2BasedOn1(_In_ WDFDEVICE Device);

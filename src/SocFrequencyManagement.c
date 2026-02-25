@@ -17,9 +17,13 @@ static unsigned int clamp_index(unsigned int idx, size_t max)
     return idx;
 }
 
-// Stub: perform hardware perf-state write (NO-OP prototype)
-// Write the perf_state index into the reg_perf_state register (offset 0x920)
-// Domain maps: Domain==0 -> mmio[0], Domain==4 -> mmio[1], Domain==7 -> mmio[2]
+/* Stub: perform hardware perf-state write (NO-OP prototype)
+ * Write the perf_state index into the reg_perf_state register (offset 0x920)
+ * Domain maps: 
+               CPU==0-3 -> mmio[0]
+               CPU==4-6 -> mmio[1]
+               CPU==7   -> mmio[2]
+*/
 static NTSTATUS hw_set_perf_state(WDFDEVICE Device, UINT32 Domain, UINT32 Index)
 {
     PDEVICE_CONTEXT devCtx = DeviceGetContext(Device);
@@ -27,7 +31,7 @@ static NTSTATUS hw_set_perf_state(WDFDEVICE Device, UINT32 Domain, UINT32 Index)
     ULONG *reg;
     const ULONG reg_perf_state_off = 0x920;
 
-    // Only Domain2 (value == 2) is supported; map to MmioBase[2]
+    // Only CPU7 (value == 2) is supported; map to MmioBase[2]
     if (Domain == 2) {
         base = devCtx->MmioBase[2];
     } else {
@@ -52,7 +56,7 @@ NTSTATUS QcomSetPerfState(_In_ WDFDEVICE Device, _In_ UINT32 Domain, _In_ UINT32
     return hw_set_perf_state(Device, Domain, Index);
 }
 
-// Read current perf_state index from given domain MMIO (offset 0x920)
+// Read current perf_state index from given domain MMIO
 static NTSTATUS read_perf_state_index(WDFDEVICE Device, UINT32 Domain, UINT32 *Index)
 {
     PDEVICE_CONTEXT devCtx = DeviceGetContext(Device);
@@ -63,8 +67,8 @@ static NTSTATUS read_perf_state_index(WDFDEVICE Device, UINT32 Domain, UINT32 *I
         return STATUS_INVALID_PARAMETER;
 
     if (Domain == 0) base = devCtx->MmioBase[0];
-    else if (Domain == 4) base = devCtx->MmioBase[1];
-    else if (Domain == 7) base = devCtx->MmioBase[2];
+    else if (Domain == 1) base = devCtx->MmioBase[1];
+    else if (Domain == 2) base = devCtx->MmioBase[2];
     else return STATUS_INVALID_PARAMETER;
 
     if (base == NULL)
@@ -98,13 +102,13 @@ static unsigned int find_closest_index_in_cpu7(unsigned int target_khz)
 }
 
 // Adjust Domain2 based on current Domain1 perf_state frequencies
-NTSTATUS QcomAdjustDomain2BasedOn0And1(_In_ WDFDEVICE Device)
+NTSTATUS QcomAdjustDomain2BasedOn1(_In_ WDFDEVICE Device)
 {
     UINT32 idx1 = 0;
     NTSTATUS s1;
 
     // Only depend on Domain1 (mid-cluster)
-    s1 = read_perf_state_index(Device, 4, &idx1);
+    s1 = read_perf_state_index(Device, 1, &idx1);
     if (!NT_SUCCESS(s1)) {
         KdPrint(("SocFrequencyManagement: cannot read domain1 perf_state (s1=0x%08x)\n", s1));
         return STATUS_UNSUCCESSFUL;
@@ -144,7 +148,7 @@ QcomPeriodicTimerFunc(_In_ WDFTIMER Timer)
         return;
 
     // Call adjust function; ignore return - logs inside function
-    QcomAdjustDomain2BasedOn0And1(device);
+    QcomAdjustDomain2BasedOn1(device);
 }
 
 NTSTATUS QcomEvtIoDeviceControl(
