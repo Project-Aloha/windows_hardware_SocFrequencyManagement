@@ -23,6 +23,7 @@ jobs:
       - name: Build drivers
         shell: pwsh
         run: |
+          ./"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
           msbuild SocFrequencyManagement.sln /p:Platform=ARM64
 
 # TODO: Sign drivers
