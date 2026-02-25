@@ -1,5 +1,5 @@
 /*
- * qcom_cpufreq Windows prototype implementation
+ * SocFrequencyManagement Windows prototype implementation
  * - Hardcoded LUT values taken from sm8150.dtsi (operating-points)
  * - IOCTL-based interface to set/get perf-state index
  * - No real hardware MMIO/ACPI writes (stubs provided)
@@ -7,7 +7,7 @@
 
 #include <ntddk.h>
 #include <wdf.h>
-#include "qcom_cpufreq.h"
+#include "../include/SocFrequencyManagement.h"
 
 // Helper: clamp index
 static unsigned int clamp_index(unsigned int idx, size_t max)
@@ -35,13 +35,13 @@ static NTSTATUS hw_set_perf_state(WDFDEVICE Device, UINT32 Domain, UINT32 Index)
     }
 
     if (base == NULL) {
-        KdPrint(("qcom_cpufreq: hw_set_perf_state domain=%u no MMIO mapped\n", Domain));
+        KdPrint(("SocFrequencyManagement: hw_set_perf_state domain=%u no MMIO mapped\n", Domain));
         return STATUS_DEVICE_NOT_READY;
     }
 
     reg = (ULONG *)((PUCHAR)base + reg_perf_state_off);
     WRITE_REGISTER_ULONG(reg, (ULONG)Index);
-    KdPrint(("qcom_cpufreq: wrote perf_state domain=%u index=%u reg=%p\n", Domain, Index, reg));
+    KdPrint(("SocFrequencyManagement: wrote perf_state domain=%u index=%u reg=%p\n", Domain, Index, reg));
 
     return STATUS_SUCCESS;
 }
@@ -97,7 +97,7 @@ static unsigned int find_closest_index_in_cpu7(unsigned int target_khz)
     return best;
 }
 
-// Adjust Domain2 based on current Domain0 and Domain1 perf_state frequencies
+// Adjust Domain2 based on current Domain1 perf_state frequencies
 NTSTATUS QcomAdjustDomain2BasedOn0And1(_In_ WDFDEVICE Device)
 {
     UINT32 idx1 = 0;
@@ -106,7 +106,7 @@ NTSTATUS QcomAdjustDomain2BasedOn0And1(_In_ WDFDEVICE Device)
     // Only depend on Domain1 (mid-cluster)
     s1 = read_perf_state_index(Device, 4, &idx1);
     if (!NT_SUCCESS(s1)) {
-        KdPrint(("qcom_cpufreq: cannot read domain1 perf_state (s1=0x%08x)\n", s1));
+        KdPrint(("SocFrequencyManagement: cannot read domain1 perf_state (s1=0x%08x)\n", s1));
         return STATUS_UNSUCCESSFUL;
     }
 
@@ -127,9 +127,9 @@ NTSTATUS QcomAdjustDomain2BasedOn0And1(_In_ WDFDEVICE Device)
 
     NTSTATUS s = hw_set_perf_state(Device, 2, new_idx);
     if (!NT_SUCCESS(s))
-        KdPrint(("qcom_cpufreq: failed to write Domain2 idx=%u status=0x%08x\n", new_idx, s));
+        KdPrint(("SocFrequencyManagement: failed to write Domain2 idx=%u status=0x%08x\n", new_idx, s));
     else
-        KdPrint(("qcom_cpufreq: adjusted Domain2 to idx=%u (~%u kHz) based on domain1=%u kHz\n",
+        KdPrint(("SocFrequencyManagement: adjusted Domain2 to idx=%u (~%u kHz) based on domain1=%u kHz\n",
                  new_idx, lut_cpu7_khz[new_idx], freq1));
 
     return s;

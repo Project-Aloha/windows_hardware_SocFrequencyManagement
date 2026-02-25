@@ -14,17 +14,17 @@
     <None Include="README.md" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Device.c" />
-    <ClCompile Include="Driver.c" />
-    <ClCompile Include="qcom_cpufreq.c" />
+    <ClCompile Include="src\Device.c" />
+    <ClCompile Include="src\Driver.c" />
+    <ClCompile Include="src\SocFrequencyManagement.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Device.h" />
-    <ClInclude Include="qcom_cpufreq.h" />
-    <ClInclude Include="trace.h" />
+    <ClInclude Include="include\Device.h" />
+    <ClInclude Include="include\SocFrequencyManagement.h" />
+    <ClInclude Include="include\trace.h" />
   </ItemGroup>
   <ItemGroup>
-    <Inf Include="qcom_cpufreq.inf" />
+    <Inf Include="src\SocFrequencyManagement.inf" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{A5B1C2D3-1234-4F6A-9B8C-ABCDEF012345}</ProjectGuid>
@@ -33,7 +33,7 @@
     <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
     <Configuration>Debug</Configuration>
     <Platform Condition="'$(Platform)' == ''">Win32</Platform>
-    <RootNamespace>qcom_cpufreq</RootNamespace>
+    <RootNamespace>SocFrequencyManagement</RootNamespace>
     <WindowsTargetPlatformVersion>10.0.22621.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -71,7 +71,7 @@
     <ClCompile>
       <WppEnabled>true</WppEnabled>
       <WppRecorderEnabled>true</WppRecorderEnabled>
-      <WppScanConfigurationData Condition="'%(ClCompile.ScanConfigurationData)' == ''">trace.h</WppScanConfigurationData>
+      <WppScanConfigurationData Condition="'%(ClCompile.ScanConfigurationData)' == ''">include\trace.h</WppScanConfigurationData>
       <WppKernelMode>true</WppKernelMode>
       <WarningLevel>Level3</WarningLevel>
       <TreatWarningAsError>false</TreatWarningAsError>
@@ -84,7 +84,7 @@
     <ClCompile>
       <WppEnabled>true</WppEnabled>
       <WppRecorderEnabled>true</WppRecorderEnabled>
-      <WppScanConfigurationData Condition="'%(ClCompile.ScanConfigurationData)' == ''">trace.h</WppScanConfigurationData>
+      <WppScanConfigurationData Condition="'%(ClCompile.ScanConfigurationData)' == ''">..\include\trace.h</WppScanConfigurationData>
       <WppKernelMode>true</WppKernelMode>
       <WarningLevel>Level3</WarningLevel>
       <TreatWarningAsError>false</TreatWarningAsError>

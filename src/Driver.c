@@ -1,11 +1,11 @@
 /*
- * qcom_cpufreq Windows KMDF prototype
+ * SocFrequencyManagement Windows KMDF prototype
  * Minimal DriverEntry that registers EvtDeviceAdd
  */
 
 #include <ntddk.h>
 #include <wdf.h>
-#include "Device.h"
+#include "../include/Device.h"
 
 NTSTATUS
 DriverEntry(
@@ -25,9 +25,9 @@ DriverEntry(
                              WDF_NO_HANDLE);
 
     if (!NT_SUCCESS(status)) {
-        KdPrint(("qcom_cpufreq: WdfDriverCreate failed 0x%08x\n", status));
+        KdPrint(("SocFrequencyManagement: WdfDriverCreate failed 0x%08x\n", status));
     } else {
-        KdPrint(("qcom_cpufreq: DriverEntry success\n"));
+        KdPrint(("SocFrequencyManagement: DriverEntry success\n"));
     }
 
     return status;

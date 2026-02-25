@@ -1,4 +1,4 @@
-// Minimal trace.h for qcom_cpufreq WPP
+// Minimal trace.h for SocFrequencyManagement WPP
 // This file provides WPP markers for tracewpp and a simple TraceEvents
 // fallback for build-time processing and debug printing.
 

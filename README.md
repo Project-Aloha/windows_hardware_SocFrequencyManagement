@@ -9,6 +9,6 @@ for Domain2 (third freq-domain). Use this tree only for testing.
 Files:
 - `Driver.c` - KMDF DriverEntry
 - `Device.c` - EvtDeviceAdd, IOCTL queue, MMIO mapping
-- `qcom_cpufreq.c` - LUT mappings and IOCTL handling
-- `qcom_cpufreq.h` - IOCTL / context definitions
-- `qcom_cpufreq.inf` - sample INF for ARM64 installation
+- `SocFrequencyManagement.c` - LUT mappings and IOCTL handling
+- `SocFrequencyManagement.h` - IOCTL / context definitions
+- `SocFrequencyManagement.inf` - sample INF for ARM64 installation

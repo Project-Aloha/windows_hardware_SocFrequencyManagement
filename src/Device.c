@@ -1,9 +1,9 @@
-/* Device creation and IOCTL handling for qcom_cpufreq prototype */
+/* Device creation and IOCTL handling for SocFrequencyManagement prototype */
 
 #include <ntddk.h>
 #include <wdf.h>
-#include "Device.h"
-#include "qcom_cpufreq.h"
+#include "../include/Device.h"
+#include "../include/SocFrequencyManagement.h"
 
 // Timer callback prototype
 EVT_WDF_TIMER QcomPeriodicTimerFunc;
@@ -27,7 +27,7 @@ DeviceEvtCleanup(_In_ WDFOBJECT DeviceObject)
         if (devCtx->MmioBase[i]) {
             MmUnmapIoSpace(devCtx->MmioBase[i], mapSize);
             devCtx->MmioBase[i] = NULL;
-            KdPrint(("qcom_cpufreq: unmapped domain %d\n", i));
+            KdPrint(("SocFrequencyManagement: unmapped domain %d\n", i));
         }
     }
 }
@@ -51,7 +51,7 @@ QcomEvtDeviceAdd(
 
     status = WdfDeviceCreate(&DeviceInit, &attributes, &device);
     if (!NT_SUCCESS(status)) {
-        KdPrint(("qcom_cpufreq: WdfDeviceCreate failed 0x%08x\n", status));
+        KdPrint(("SocFrequencyManagement: WdfDeviceCreate failed 0x%08x\n", status));
         return status;
     }
 
@@ -72,10 +72,10 @@ QcomEvtDeviceAdd(
             if (devCtx->MmioBase[i] == NULL) {
                 PVOID base = MmMapIoSpace(physAddrs[i], mapSize, MmNonCached);
                 if (base == NULL) {
-                    KdPrint(("qcom_cpufreq: MmMapIoSpace failed for domain %d phys=0x%llx\n", i, physAddrs[i].QuadPart));
+                    KdPrint(("SocFrequencyManagement: MmMapIoSpace failed for domain %d phys=0x%llx\n", i, physAddrs[i].QuadPart));
                 } else {
                     devCtx->MmioBase[i] = base;
-                    KdPrint(("qcom_cpufreq: mapped domain %d -> %p\n", i, base));
+                    KdPrint(("SocFrequencyManagement: mapped domain %d -> %p\n", i, base));
                 }
             }
         }
@@ -84,7 +84,7 @@ QcomEvtDeviceAdd(
         {
             NTSTATUS s = QcomAdjustDomain2BasedOn0And1(device);
             if (!NT_SUCCESS(s))
-                KdPrint(("qcom_cpufreq: initial Domain2 adjustment failed 0x%08x\n", s));
+                KdPrint(("SocFrequencyManagement: initial Domain2 adjustment failed 0x%08x\n", s));
         }
     }
 
@@ -101,11 +101,11 @@ QcomEvtDeviceAdd(
 
         status = WdfTimerCreate(&timerConfig, &timerAttr, &timer);
         if (!NT_SUCCESS(status)) {
-            KdPrint(("qcom_cpufreq: WdfTimerCreate failed 0x%08x\n", status));
+            KdPrint(("SocFrequencyManagement: WdfTimerCreate failed 0x%08x\n", status));
         } else {
             devCtx->PeriodicTimer = timer;
             WdfTimerStart(timer, WDF_REL_TIMEOUT_IN_MS(periodMs));
-            KdPrint(("qcom_cpufreq: periodic timer started (%u ms)\n", periodMs));
+            KdPrint(("SocFrequencyManagement: periodic timer started (%u ms)\n", periodMs));
         }
     }
 
@@ -114,11 +114,11 @@ QcomEvtDeviceAdd(
 
     status = WdfIoQueueCreate(device, &ioQueueConfig, WDF_NO_OBJECT_ATTRIBUTES, WDF_NO_HANDLE);
     if (!NT_SUCCESS(status)) {
-        KdPrint(("qcom_cpufreq: WdfIoQueueCreate failed 0x%08x\n", status));
+        KdPrint(("SocFrequencyManagement: WdfIoQueueCreate failed 0x%08x\n", status));
         return status;
     }
 
-    KdPrint(("qcom_cpufreq: device created\n"));
+    KdPrint(("SocFrequencyManagement: device created\n"));
 
     return STATUS_SUCCESS;
 }
