@@ -1,0 +1,38 @@
+name: Build SocFrequencyManagement Drivers
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - hana
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-2025 # Shipped with 26100 WDK
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Windows Driver Kit (WDK)
+        shell: pwsh
+        run: |
+          winget install --source winget --exact --id Microsoft.WindowsWDK.10.0.26100
+
+      - name: Build drivers
+        shell: pwsh
+        run: |
+          msbuild SocFrequencyManagement.sln /p:Platform=ARM64
+
+# TODO: Sign drivers
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SocFrequencyManagement-drivers-build
+          path: |
+            Build/**
+            !Build/obj/
+          compression-level: 7
+          if-no-files-found: error
