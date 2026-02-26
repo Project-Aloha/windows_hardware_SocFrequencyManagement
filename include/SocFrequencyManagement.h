@@ -7,7 +7,27 @@
 #define IOCTL_QCOM_GET_FREQ CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_DATA)
 #define IOCTL_QCOM_SET_FREQ CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_WRITE_DATA)
 
-// Hardcoded LUTs (frequencies in kHz) from sm8150.dtsi OPP tables
+// LUT register offsets (qcom_soc_data for SM8150)
+#define REG_ENABLE           0x0
+#define REG_DCVS_CTRL        0xbc
+#define REG_FREQ_LUT         0x110
+#define REG_VOLT_LUT         0x114
+#define REG_PERF_STATE       0x920
+#define LUT_ROW_SIZE         32       // bytes between LUT entries
+#define LUT_MAX_ENTRIES      40
+
+// LUT field masks
+#define LUT_SRC_MASK         0xC0000000  // bits 31:30
+#define LUT_SRC_SHIFT        30
+#define LUT_L_VAL_MASK       0x000000FF  // bits 7:0
+#define LUT_CORE_COUNT_MASK  0x00070000  // bits 18:16
+#define LUT_CORE_COUNT_SHIFT 16
+#define LUT_TURBO_IND        1
+
+// XO clock rate in Hz (19.2 MHz for Qualcomm platforms)
+#define XO_RATE_HZ           19200000ULL
+
+// Hardcoded LUTs (frequencies in kHz) from sm8150.dtsi OPP tables - used as fallback
 static const unsigned int lut_cpu0_khz[] = {
     300000,   /* 300.0 MHz */
     403200,   /* 403.2 MHz */
@@ -82,6 +102,13 @@ typedef struct _QCOM_SET_FREQ_IN {
     UINT32 Index;  // LUT index
 } QCOM_SET_FREQ_IN, *PQCOM_SET_FREQ_IN;
 
+// Parsed LUT entry
+typedef struct _PARSED_LUT_ENTRY {
+    UINT32 FreqKhz;     // Frequency in kHz
+    UINT32 CoreCount;   // Number of cores at this OPP
+    BOOLEAN Valid;      // Whether this entry is valid
+} PARSED_LUT_ENTRY, *PPARSED_LUT_ENTRY;
+
 // Device context to keep per-domain current index
 typedef struct _DEVICE_CONTEXT {
     // Current index for only Domain2 (third freq-domain)
@@ -92,6 +119,12 @@ typedef struct _DEVICE_CONTEXT {
     BOOLEAN PerCoreDcvs[3];
     // WDF timer for periodic Domain2 adjustment
     WDFTIMER PeriodicTimer;
+    // Parsed LUT tables for each domain
+    PARSED_LUT_ENTRY ParsedLut[3][LUT_MAX_ENTRIES];
+    // Number of valid entries in each domain's LUT
+    UINT32 LutCount[3];
+    // Whether LUT was successfully parsed for each domain
+    BOOLEAN LutValid[3];
 } DEVICE_CONTEXT, *PDEVICE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext)
@@ -107,3 +140,6 @@ NTSTATUS QcomEvtIoDeviceControl(
 // Exported helper to set perf state from other modules (e.g. Device.c)
 NTSTATUS QcomSetPerfState(_In_ WDFDEVICE Device, _In_ UINT32 Domain, _In_ UINT32 Index);
 NTSTATUS QcomAdjustDomain2BasedOn1(_In_ WDFDEVICE Device);
+
+// LUT parsing function - reads frequency LUT from hardware registers
+NTSTATUS QcomParseLut(_In_ WDFDEVICE Device, _In_ UINT32 Domain);

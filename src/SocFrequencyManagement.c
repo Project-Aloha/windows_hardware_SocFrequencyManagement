@@ -29,7 +29,6 @@ static NTSTATUS hw_set_perf_state(WDFDEVICE Device, UINT32 Domain, UINT32 Index)
     PDEVICE_CONTEXT devCtx = DeviceGetContext(Device);
     PVOID base = NULL;
     ULONG *reg;
-    const ULONG reg_perf_state_off = 0x920;
 
     // Map domain to MMIO base: domain indices 0/1/2 map to MmioBase[0..2]
     if (Domain == 0) {
@@ -68,7 +67,7 @@ static NTSTATUS hw_set_perf_state(WDFDEVICE Device, UINT32 Domain, UINT32 Index)
         }
 
         for (i = 0; i < core_count; i++) {
-            reg = (ULONG *)((PUCHAR)base + reg_perf_state_off + i * sizeof(ULONG));
+            reg = (ULONG *)((PUCHAR)base + REG_PERF_STATE + i * sizeof(ULONG));
             WRITE_REGISTER_ULONG(reg, (ULONG)Index);
         }
 
@@ -90,25 +89,219 @@ static NTSTATUS read_perf_state_index(WDFDEVICE Device, UINT32 Domain, UINT32 *I
 {
     PDEVICE_CONTEXT devCtx = DeviceGetContext(Device);
     PVOID base = NULL;
-    const ULONG reg_perf_state_off = 0x920;
 
-    if (!Index)
+    if (!Index) {
         return STATUS_INVALID_PARAMETER;
+    }
 
-    if (Domain == 0) base = devCtx->MmioBase[0];
-    else if (Domain == 1) base = devCtx->MmioBase[1];
-    else if (Domain == 2) base = devCtx->MmioBase[2];
-    else return STATUS_INVALID_PARAMETER;
+    if (Domain == 0) {
+        base = devCtx->MmioBase[0];
+    }
+    else if (Domain == 1) {
+        base = devCtx->MmioBase[1];
+    }
+    else if (Domain == 2) {
+        base = devCtx->MmioBase[2];
+    }
+    else {
+        return STATUS_INVALID_PARAMETER;
+    }
 
-    if (base == NULL)
+    if (base == NULL) {
         return STATUS_DEVICE_NOT_READY;
+    }
 
     {
-        ULONG *reg = (ULONG *)((PUCHAR)base + reg_perf_state_off);
+        ULONG *reg = (ULONG *)((PUCHAR)base + REG_PERF_STATE);
         ULONG val = READ_REGISTER_ULONG(reg);
         *Index = (UINT32)val;
         return STATUS_SUCCESS;
     }
+}
+
+// Parse LUT from hardware registers for a specific domain
+// Follows Linux kernel qcom_cpufreq_hw_read_lut() logic
+NTSTATUS QcomParseLut(_In_ WDFDEVICE Device, _In_ UINT32 Domain)
+{
+    PDEVICE_CONTEXT devCtx = DeviceGetContext(Device);
+    PVOID base = NULL;
+    UINT32 i;
+    UINT32 prevFreq = 0;
+    UINT32 validCount = 0;
+
+    if (Domain > 2) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    base = devCtx->MmioBase[Domain];
+    if (base == NULL) {
+        KdPrint(("QcomParseLut: domain %u not mapped\n", Domain));
+        devCtx->LutValid[Domain] = FALSE;
+        return STATUS_DEVICE_NOT_READY;
+    }
+
+    // Initialize all entries as invalid
+    for (i = 0; i < LUT_MAX_ENTRIES; i++) {
+        devCtx->ParsedLut[Domain][i].FreqKhz = 0;
+        devCtx->ParsedLut[Domain][i].CoreCount = 0;
+        devCtx->ParsedLut[Domain][i].Valid = FALSE;
+    }
+
+    for (i = 0; i < LUT_MAX_ENTRIES; i++) {
+        ULONG dataFreq, dataVolt;
+        ULONG src, lval, coreCount;
+        UINT32 freqKhz;
+
+        // Read frequency LUT entry
+        dataFreq = READ_REGISTER_ULONG((ULONG *)((PUCHAR)base + REG_FREQ_LUT + i * LUT_ROW_SIZE));
+        // Read voltage LUT entry (for reference, not used for freq calculation)
+        dataVolt = READ_REGISTER_ULONG((ULONG *)((PUCHAR)base + REG_VOLT_LUT + i * LUT_ROW_SIZE));
+        UNREFERENCED_PARAMETER(dataVolt);
+
+        src = (dataFreq & LUT_SRC_MASK) >> LUT_SRC_SHIFT;
+        lval = dataFreq & LUT_L_VAL_MASK;
+        coreCount = (dataFreq & LUT_CORE_COUNT_MASK) >> LUT_CORE_COUNT_SHIFT;
+
+        // Calculate frequency
+        // If src is set, freq = xo_rate * lval
+        // Otherwise use a fixed backup rate (we use hardcoded fallback)
+        if (src) {
+            freqKhz = (UINT32)((XO_RATE_HZ * lval) / 1000);
+        } else {
+            // Fallback: this shouldn't happen often on SM8150
+            freqKhz = (UINT32)(XO_RATE_HZ / 1000);
+        }
+
+        // Skip turbo indicator entries and duplicate frequencies
+        if (coreCount == LUT_TURBO_IND) {
+            devCtx->ParsedLut[Domain][i].FreqKhz = freqKhz;
+            devCtx->ParsedLut[Domain][i].CoreCount = coreCount;
+            devCtx->ParsedLut[Domain][i].Valid = FALSE; // Mark as invalid for regular use
+            continue;
+        }
+
+        // Check for end of table: two consecutive same frequencies
+        if (i > 0 && prevFreq == freqKhz) {
+            // Check if previous was turbo indicator - if so, mark it valid as boost freq
+            if (devCtx->ParsedLut[Domain][i - 1].Valid == FALSE &&
+                devCtx->ParsedLut[Domain][i - 1].FreqKhz == prevFreq) {
+                devCtx->ParsedLut[Domain][i - 1].Valid = TRUE;
+                validCount++;
+                KdPrint(("QcomParseLut: domain %u idx %u boost freq %u kHz\n", 
+                         Domain, i - 1, prevFreq));
+            }
+            break; // End of LUT
+        }
+
+        if (freqKhz != prevFreq) {
+            devCtx->ParsedLut[Domain][i].FreqKhz = freqKhz;
+            devCtx->ParsedLut[Domain][i].CoreCount = coreCount;
+            devCtx->ParsedLut[Domain][i].Valid = TRUE;
+            validCount++;
+
+            KdPrint(("QcomParseLut: domain %u idx %u freq=%u kHz cores=%u\n", 
+                     Domain, i, freqKhz, coreCount));
+        }
+
+        prevFreq = freqKhz;
+    }
+
+    devCtx->LutCount[Domain] = validCount;
+    devCtx->LutValid[Domain] = (validCount > 0);
+
+    KdPrint(("QcomParseLut: domain %u total valid entries=%u\n", Domain, validCount));
+
+    return (validCount > 0) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+}
+
+// Find closest index in domain's parsed LUT for a target frequency
+// Returns index in LUT, or fallback_index if LUT not valid
+static unsigned int find_closest_index_in_parsed_lut(
+    PDEVICE_CONTEXT devCtx,
+    UINT32 Domain,
+    unsigned int target_khz,
+    unsigned int fallback_index)
+{
+    unsigned int best = 0;
+    unsigned int best_diff = (unsigned int)-1;
+    unsigned int i;
+    BOOLEAN found = FALSE;
+
+    if (Domain > 2 || !devCtx->LutValid[Domain]) {
+        return fallback_index;
+    }
+
+    for (i = 0; i < LUT_MAX_ENTRIES; i++) {
+        if (devCtx->ParsedLut[Domain][i].Valid) {
+            unsigned int freq = devCtx->ParsedLut[Domain][i].FreqKhz;
+            unsigned int diff = (freq > target_khz) ? (freq - target_khz) : (target_khz - freq);
+            if (diff < best_diff) {
+                best_diff = diff;
+                best = i;
+                found = TRUE;
+            }
+        }
+    }
+
+    return found ? best : fallback_index;
+}
+
+// Get frequency for a given index in domain's LUT
+// Uses parsed LUT if available, otherwise falls back to hardcoded
+static unsigned int get_freq_for_index(PDEVICE_CONTEXT devCtx, UINT32 Domain, unsigned int index)
+{
+    // Try parsed LUT first
+    if (Domain < 3 && devCtx->LutValid[Domain]) {
+        if (index < LUT_MAX_ENTRIES && devCtx->ParsedLut[Domain][index].Valid) {
+            return devCtx->ParsedLut[Domain][index].FreqKhz;
+        }
+        // If index is out of range, find valid entry
+        for (unsigned int i = 0; i < LUT_MAX_ENTRIES; i++) {
+            if (devCtx->ParsedLut[Domain][i].Valid) {
+                // Return last valid entry if index too high
+                if (i >= index || i == LUT_MAX_ENTRIES - 1) {
+                    return devCtx->ParsedLut[Domain][i].FreqKhz;
+                }
+            }
+        }
+    }
+
+    // Fallback to hardcoded LUTs
+    if (Domain == 0) {
+        index = clamp_index(index, lut_cpu0_count);
+        return lut_cpu0_khz[index];
+    } else if (Domain == 1) {
+        index = clamp_index(index, lut_cpu4_count);
+        return lut_cpu4_khz[index];
+    } else if (Domain == 2) {
+        index = clamp_index(index, lut_cpu7_count);
+        return lut_cpu7_khz[index];
+    }
+
+    return 0;
+}
+
+// Get max index for a domain (uses parsed LUT if valid)
+static unsigned int get_max_index(PDEVICE_CONTEXT devCtx, UINT32 Domain)
+{
+    if (Domain < 3 && devCtx->LutValid[Domain]) {
+        // Find last valid entry
+        for (int i = LUT_MAX_ENTRIES - 1; i >= 0; i--) {
+            if (devCtx->ParsedLut[Domain][i].Valid) {
+                return (unsigned int)i;
+            }
+        }
+    }
+
+    // Fallback to hardcoded
+    if (Domain == 0) {
+        return (unsigned int)(lut_cpu0_count - 1);
+    } else if (Domain == 1) {
+        return (unsigned int)(lut_cpu4_count - 1);
+    } else if (Domain == 2) {
+        return (unsigned int)(lut_cpu7_count - 1);
+    }
+    return 0;
 }
 
 // Choose the best index in lut_cpu7_khz closest to target_khz
@@ -131,10 +324,14 @@ static unsigned int find_closest_index_in_cpu7(unsigned int target_khz)
 }
 
 // Adjust Domain2 based on current Domain1 perf_state frequencies
+// Uses parsed LUT if available, otherwise falls back to hardcoded LUT
 NTSTATUS QcomAdjustDomain2BasedOn1(_In_ WDFDEVICE Device)
 {
+    PDEVICE_CONTEXT devCtx = DeviceGetContext(Device);
     UINT32 idx1 = 0;
     NTSTATUS s1;
+    unsigned int freq1, new_idx;
+    unsigned int max_idx1, max_idx2;
 
     // Only depend on Domain1 (mid-cluster)
     s1 = read_perf_state_index(Device, 1, &idx1);
@@ -143,27 +340,38 @@ NTSTATUS QcomAdjustDomain2BasedOn1(_In_ WDFDEVICE Device)
         return STATUS_UNSUCCESSFUL;
     }
 
-    idx1 = clamp_index(idx1, lut_cpu4_count);
-    unsigned int freq1 = lut_cpu4_khz[idx1];
+    // Get max indices for domains 1 and 2
+    max_idx1 = get_max_index(devCtx, 1);
+    max_idx2 = get_max_index(devCtx, 2);
+
+    // Clamp idx1 to valid range
+    if (idx1 > max_idx1) idx1 = max_idx1;
+
+    // Get frequency at idx1
+    freq1 = get_freq_for_index(devCtx, 1, idx1);
 
     // If domain1 is at its max OPP, set Domain2 to max as well
-    unsigned int new_idx;
-    if (idx1 == (UINT32)(lut_cpu4_count - 1)) {
-        new_idx = (unsigned int)(lut_cpu7_count - 1);
+    if (idx1 == (UINT32)max_idx1) {
+        new_idx = max_idx2;
     } else {
-        new_idx = find_closest_index_in_cpu7(freq1);
+        // Find closest frequency in Domain2 LUT
+        // First try parsed LUT with fallback
+        unsigned int fallback = find_closest_index_in_cpu7(freq1);
+        new_idx = find_closest_index_in_parsed_lut(devCtx, 2, freq1, fallback);
     }
 
     // Update device context and write hardware
-    PDEVICE_CONTEXT devCtx = DeviceGetContext(Device);
     devCtx->CurrentIndexDomain2 = new_idx;
 
     NTSTATUS s = hw_set_perf_state(Device, 2, new_idx);
-    if (!NT_SUCCESS(s))
+    if (!NT_SUCCESS(s)) {
         KdPrint(("SocFrequencyManagement: failed to write Domain2 idx=%u status=0x%08x\n", new_idx, s));
-    else
-        KdPrint(("SocFrequencyManagement: adjusted Domain2 to idx=%u (~%u kHz) based on domain1=%u kHz\n",
-                 new_idx, lut_cpu7_khz[new_idx], freq1));
+    } else {
+        unsigned int freq2 = get_freq_for_index(devCtx, 2, new_idx);
+        KdPrint(("SocFrequencyManagement: adjusted Domain2 to idx=%u (~%u kHz) based on domain1=%u kHz%s\n",
+                 new_idx, freq2, freq1, 
+                 devCtx->LutValid[2] ? " [parsed LUT]" : " [hardcoded]"));
+    }
 
     return s;
 }
@@ -209,10 +417,8 @@ NTSTATUS QcomEvtIoDeviceControl(
                 break;
             }
 
-            UINT32 freq = 0;
             unsigned int idx = devCtx->CurrentIndexDomain2;
-            idx = clamp_index(idx, lut_cpu7_count);
-            freq = lut_cpu7_khz[idx];
+            UINT32 freq = get_freq_for_index(devCtx, 2, idx);
 
             // Return freq as output buffer
             PVOID outBuf = NULL;
@@ -238,10 +444,12 @@ NTSTATUS QcomEvtIoDeviceControl(
                 break;
             }
 
-            devCtx->CurrentIndexDomain2 = clamp_index(in->Index, lut_cpu7_count);
+            // Clamp index to max valid index for domain 2
+            unsigned int max_idx = get_max_index(devCtx, 2);
+            devCtx->CurrentIndexDomain2 = (in->Index > max_idx) ? max_idx : in->Index;
 
-            // Call hardware stub (no-op)
-            status = hw_set_perf_state(device, in->Domain, in->Index);
+            // Write to hardware
+            status = hw_set_perf_state(device, in->Domain, devCtx->CurrentIndexDomain2);
             WdfRequestComplete(Request, status);
             return status;
         }

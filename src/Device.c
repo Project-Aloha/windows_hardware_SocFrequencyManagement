@@ -90,6 +90,7 @@ QcomEvtDeviceAdd(
                 PVOID b = devCtx->MmioBase[d];
                 if (b == NULL) {
                     devCtx->PerCoreDcvs[d] = FALSE;
+                    devCtx->LutValid[d] = FALSE;
                     KdPrint(("SocFrequencyManagement: domain %d not mapped, skipping\n", d));
                     continue;
                 }
@@ -102,6 +103,7 @@ QcomEvtDeviceAdd(
                         MmUnmapIoSpace(devCtx->MmioBase[d], mapSize);
                         devCtx->MmioBase[d] = NULL;
                         devCtx->PerCoreDcvs[d] = FALSE;
+                        devCtx->LutValid[d] = FALSE;
                         continue;
                     }
                 }
@@ -111,6 +113,14 @@ QcomEvtDeviceAdd(
                     ULONG dcvs = READ_REGISTER_ULONG((ULONG *)((PUCHAR)b + reg_dcvs_ctrl_off));
                     devCtx->PerCoreDcvs[d] = ((dcvs & 0x1) != 0) ? TRUE : FALSE;
                     KdPrint(("SocFrequencyManagement: domain %d reg_dcvs_ctrl=0x%08x per_core=%d\n", d, dcvs, devCtx->PerCoreDcvs[d]));
+                }
+
+                // Parse LUT from hardware registers
+                {
+                    NTSTATUS lutStatus = QcomParseLut(device, (UINT32)d);
+                    if (!NT_SUCCESS(lutStatus)) {
+                        KdPrint(("SocFrequencyManagement: domain %d LUT parsing failed 0x%08x, will use hardcoded fallback\n", d, lutStatus));
+                    }
                 }
             }
 
