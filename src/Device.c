@@ -138,7 +138,7 @@ QcomEvtDeviceAdd(
         WDFTIMER timer;
         WDF_TIMER_CONFIG timerConfig;
         WDF_OBJECT_ATTRIBUTES timerAttr;
-        const ULONG periodMs = 5000; // 5 seconds
+        const ULONG periodMs = 1000; // 1 seconds
 
         WDF_TIMER_CONFIG_INIT_PERIODIC(&timerConfig, QcomPeriodicTimerFunc, periodMs);
         WDF_OBJECT_ATTRIBUTES_INIT(&timerAttr);
